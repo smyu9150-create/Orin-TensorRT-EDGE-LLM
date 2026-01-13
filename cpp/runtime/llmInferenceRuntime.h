@@ -23,6 +23,7 @@
 #include "runtime/llmEngineRunner.h"
 #include "runtime/llmRuntimeUtils.h"
 #include "tokenizer/tokenizer.h"
+#include <functional>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -59,6 +60,13 @@ public:
      */
     ~LLMInferenceRuntime() = default;
 
+    /*! \brief Token callback function type for streaming generation
+     *  \param token The generated token string
+     *  \param isFirst Whether this is the first token (for TTFT measurement)
+     *  \return True to continue generation, false to stop early
+     */
+    using TokenCallback = std::function<bool(std::string const& token, bool isFirst)>;
+
     /*! \brief Handle an LLM generation request
      *  \param request The generation request containing prompt and generation parameters
      *  \param response The generation response to be filled with output
@@ -66,6 +74,16 @@ public:
      *  \return True if request was handled successfully, false otherwise
      */
     bool handleRequest(LLMGenerationRequest const& request, LLMGenerationResponse& response, cudaStream_t stream);
+
+    /*! \brief Handle an LLM generation request with streaming token output
+     *  \param request The generation request containing prompt and generation parameters
+     *  \param response The generation response to be filled with output
+     *  \param stream CUDA stream for execution
+     *  \param tokenCallback Callback function invoked for each generated token
+     *  \return True if request was handled successfully, false otherwise
+     */
+    bool handleRequestStreaming(LLMGenerationRequest const& request, LLMGenerationResponse& response,
+        cudaStream_t stream, TokenCallback tokenCallback);
 
     /*! \brief Capture CUDA graph for the decoding step to optimize performance
      *  \param stream CUDA stream for graph capture

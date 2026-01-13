@@ -19,6 +19,7 @@
 #include "checkMacros.h"
 #include "logger.h"
 
+#include <NvInferVersion.h>
 #include <sstream>
 
 using namespace nvinfer1;
@@ -132,10 +133,18 @@ Tensor::Tensor(Coords const& shape, DeviceType deviceType, nvinfer1::DataType da
         throw std::runtime_error("Construction of Tensor object with zero volume is prohibited");
     }
 
+    // kFP4 is only available in TensorRT 10.8+
+#if NV_TENSORRT_MAJOR > 10 || (NV_TENSORRT_MAJOR == 10 && NV_TENSORRT_MINOR >= 8)
     if (dataType == DataType::kINT4 || dataType == DataType::kFP4)
     {
         throw std::runtime_error("Sub-type like kInt4 or kFP4 are not supported");
     }
+#else
+    if (dataType == DataType::kINT4)
+    {
+        throw std::runtime_error("Sub-type like kInt4 is not supported");
+    }
+#endif
 
     mShape = shape;
     mDeviceType = deviceType;

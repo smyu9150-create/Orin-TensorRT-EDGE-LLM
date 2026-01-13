@@ -488,6 +488,253 @@ bool LLMInferenceRuntime::handleRequest(
     return true;
 }
 
+bool LLMInferenceRuntime::handleRequestStreaming(LLMGenerationRequest const& request,
+    LLMGenerationResponse& response, cudaStream_t stream, TokenCallback tokenCallback)
+{
+    std::vector<std::vector<int32_t>> batchedInputIds;
+    std::vector<std::string> batchSystemPrompts;
+    std::string loraWeightsName = request.loraWeightsName;
+
+    if (!examineRequest(request))
+    {
+        LOG_ERROR("LLMInferenceRuntime(): Input request examination failed. This request cannot be handled.");
+        return false;
+    }
+
+    int32_t const activeBatchSize = static_cast<int32_t>(request.requests.size());
+    // Streaming only supports batch size of 1
+    if (activeBatchSize != 1)
+    {
+        LOG_ERROR("LLMInferenceRuntime(): Streaming mode only supports batch size of 1, got %d", activeBatchSize);
+        return false;
+    }
+
+    // Apply chat template, extract system prompts, and optionally save KVCache
+    request.formattedRequests.resize(activeBatchSize);
+    batchSystemPrompts.reserve(activeBatchSize);
+
+    for (int32_t i = 0; i < activeBatchSize; ++i)
+    {
+        mTokenizer->applyChatTemplate(request.requests[i], request.formattedRequests[i], request.applyChatTemplate,
+            request.addGenerationPrompt, request.enableThinking);
+        batchSystemPrompts.emplace_back(request.formattedRequests[i].formattedSystemPrompt);
+
+        if (request.saveSystemPromptKVCache)
+        {
+            if (mMultimodalRunner)
+            {
+                mMultimodalRunner->preprocessSystemPrompt(
+                    batchSystemPrompts[i], mTokenizer.get(), mLLMEngineRunner->getRopeCosSinCacheTensor(), stream);
+            }
+            bool const saveCacheStatus = genAndSaveSystemPromptKVCache(batchSystemPrompts[i], loraWeightsName, stream);
+            if (!saveCacheStatus)
+            {
+                LOG_WARNING("Failed to save system prompt KVCache.");
+            }
+        }
+    }
+
+    // Preprocess user prompts and encode them
+    if (!mMultimodalRunner)
+    {
+        batchedInputIds.reserve(activeBatchSize);
+        for (int32_t i = 0; i < activeBatchSize; ++i)
+        {
+            batchedInputIds.emplace_back(
+                mTokenizer->encode(request.formattedRequests[i].formattedCompleteRequest, true));
+        }
+    }
+    else
+    {
+        if (!mMultimodalRunner->preprocess(
+                request, batchedInputIds, mTokenizer.get(), mLLMEngineRunner->getRopeCosSinCacheTensor(), stream))
+        {
+            LOG_ERROR("LLMInferenceRuntime(): Multimodal input request processing failed.");
+            return false;
+        }
+        if (!mMultimodalRunner->infer(stream))
+        {
+            LOG_ERROR("LLMInferenceRuntime(): Multimodal inference failed.");
+            return false;
+        }
+    }
+
+    if (!setUpForPrefillExecution(batchedInputIds, batchSystemPrompts, loraWeightsName, stream))
+    {
+        LOG_ERROR("LLMInferenceRuntime(): Prefill execution setup failed.");
+        return false;
+    }
+
+    auto tokenCount = calculateTokenCounts(batchedInputIds, batchSystemPrompts, loraWeightsName);
+
+    int32_t const maxInputIdsLength = mInputIds.getShape()[1];
+    int32_t maxGenerationLength = request.maxGenerateLength;
+    if (maxInputIdsLength + maxGenerationLength > mEngineConfig.maxKVCacheCapacity)
+    {
+        maxGenerationLength = mEngineConfig.maxKVCacheCapacity - maxInputIdsLength;
+    }
+
+    // Set up data structures for streaming generation
+    int32_t unFinishedBatchNum = activeBatchSize;
+    int32_t generationIter{0};
+    std::vector<std::vector<int32_t>> outputIds(activeBatchSize);
+    std::vector<bool> finishedStates(activeBatchSize, false);
+    mSelectedIndices.reshape({activeBatchSize, 1});
+    mHostSelectedTokenIds.reshape({activeBatchSize});
+    int32_t* hostSelectedTokenIdsData = mHostSelectedTokenIds.dataPointer<int32_t>();
+
+    SamplingParams params(
+        activeBatchSize, mEngineConfig.outputVocabSize, request.temperature, request.topK, request.topP);
+
+    bool userStopped = false;
+    std::string pendingUtf8Buffer;  // Buffer for incomplete UTF-8 sequences
+
+    // Helper function to check if a string ends with a complete UTF-8 character
+    auto isCompleteUtf8 = [](std::string const& str) -> bool {
+        if (str.empty()) return true;
+        
+        // Check from the end for incomplete UTF-8 sequence
+        size_t len = str.length();
+        for (size_t i = 1; i <= std::min(len, (size_t)4); ++i)
+        {
+            unsigned char c = str[len - i];
+            if ((c & 0x80) == 0)
+            {
+                // ASCII character - complete
+                return true;
+            }
+            else if ((c & 0xC0) == 0x80)
+            {
+                // Continuation byte - keep looking
+                continue;
+            }
+            else if ((c & 0xE0) == 0xC0)
+            {
+                // 2-byte start - need 2 bytes total
+                return i >= 2;
+            }
+            else if ((c & 0xF0) == 0xE0)
+            {
+                // 3-byte start - need 3 bytes total
+                return i >= 3;
+            }
+            else if ((c & 0xF8) == 0xF0)
+            {
+                // 4-byte start - need 4 bytes total
+                return i >= 4;
+            }
+        }
+        return false;
+    };
+
+    auto sampleAndStreamToken = [&](bool isFirst) {
+        trt_edgellm::topKtopPSamplingFromLogits(mOutputLogits, mSelectedIndices, params, mSamplingWorkspace, stream);
+        if (mEngineConfig.reducedVocabSize > 0)
+        {
+            trt_edgellm::mapReducedVocabToFullVocab(mSelectedIndices, mVocabMappingTable, stream);
+        }
+        CUDA_CHECK(cudaMemcpyAsync(mHostSelectedTokenIds.rawPointer(), mSelectedIndices.rawPointer(),
+            activeBatchSize * sizeof(int32_t), cudaMemcpyDeviceToHost, stream));
+        CUDA_CHECK(cudaStreamSynchronize(stream));
+
+        for (int32_t i = 0; i < activeBatchSize; ++i)
+        {
+            if (!finishedStates[i])
+            {
+                int32_t tokenId = hostSelectedTokenIdsData[i];
+                outputIds[i].push_back(tokenId);
+                finishedStates[i] = (tokenId == mTokenizer->getEosId());
+                if (finishedStates[i])
+                {
+                    unFinishedBatchNum--;
+                    // Flush any remaining buffer on finish
+                    if (!pendingUtf8Buffer.empty())
+                    {
+                        tokenCallback(pendingUtf8Buffer, false);
+                        pendingUtf8Buffer.clear();
+                    }
+                }
+                else
+                {
+                    // Decode single token and accumulate
+                    std::string tokenStr = mTokenizer->decode({tokenId}, false);
+                    pendingUtf8Buffer += tokenStr;
+                    
+                    // Only send if we have complete UTF-8 characters
+                    if (isCompleteUtf8(pendingUtf8Buffer))
+                    {
+                        if (!tokenCallback(pendingUtf8Buffer, isFirst))
+                        {
+                            userStopped = true;
+                        }
+                        pendingUtf8Buffer.clear();
+                    }
+                }
+            }
+        }
+        ++generationIter;
+    };
+
+    rt::OptionalInputTensor multimodalEmbeddings
+        = mMultimodalRunner ? std::optional{std::ref(mMultimodalRunner->getOutputEmbedding())} : std::nullopt;
+    rt::OptionalInputTensors extraVisualFeatures
+        = mMultimodalRunner ? mMultimodalRunner->getExtraVisualFeatures() : rt::OptionalInputTensors{};
+    rt::OptionalOutputTensor outputHiddenStates{std::nullopt};
+
+    // Prefill step
+    {
+        TIME_STAGE(metrics::StageNames::kLLM_PREFILL, stream);
+        bool prefillStatus = mLLMEngineRunner->executePrefillStep(mInputIds, mHostContextLengths, multimodalEmbeddings,
+            extraVisualFeatures, mOutputLogits, outputHiddenStates, stream);
+        if (!prefillStatus)
+        {
+            LOG_ERROR("LLMInferenceRuntime(): Failed to execute prefill step.");
+            return false;
+        }
+        sampleAndStreamToken(true);  // First token - for TTFT
+    }
+
+    mPrefillMetrics.recordRun(tokenCount.totalReusedTokens, tokenCount.totalComputedTokens);
+    mInputIds.reshape({activeBatchSize, 1});
+
+    // Generation loop - stream each token
+    {
+        TIME_STAGE(metrics::StageNames::kLLM_GENERATION, stream);
+        while (unFinishedBatchNum > 0 && generationIter < maxGenerationLength && !userStopped)
+        {
+            bool decodingStatus = mLLMEngineRunner->executeVanillaDecodingStep(mSelectedIndices, mOutputLogits, stream);
+            if (!decodingStatus)
+            {
+                LOG_ERROR("LLMInferenceRuntime(): Failed to execute decoding step.");
+                return false;
+            }
+            sampleAndStreamToken(false);
+        }
+    }
+
+    // Record metrics
+    int32_t totalGeneratedTokens = 0;
+    for (int32_t i = 0; i < activeBatchSize; ++i)
+    {
+        totalGeneratedTokens += static_cast<int32_t>(outputIds[i].size() - 1);
+    }
+    if (totalGeneratedTokens > 0)
+    {
+        mGenerationMetrics.recordRun(totalGeneratedTokens);
+    }
+
+    // Fill response
+    response.outputIds.clear();
+    response.outputTexts.clear();
+    for (int32_t i = 0; i < activeBatchSize; ++i)
+    {
+        response.outputIds.emplace_back(outputIds[i]);
+        response.outputTexts.emplace_back(mTokenizer->decode(outputIds[i], true));
+    }
+
+    return true;
+}
+
 bool LLMInferenceRuntime::captureDecodingCUDAGraph(cudaStream_t stream)
 {
     int32_t const maxSupportedBatchSize = mEngineConfig.maxSupportedBatchSize;

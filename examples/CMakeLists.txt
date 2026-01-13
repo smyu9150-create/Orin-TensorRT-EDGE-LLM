@@ -10,3 +10,4 @@
 add_subdirectory(utils)
 add_subdirectory(llm)
 add_subdirectory(multimodal)
+add_subdirectory(server)
