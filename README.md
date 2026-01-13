@@ -4,6 +4,11 @@
 
 ---
 
+> **🔥 RMinte Fork**: 本 fork 增加了 OpenAI 兼容 API 服务器，支持流式输出和 Base64 图片输入。
+> 详见 [README_RMINTE.md](README_RMINTE.md)
+
+---
+
 ## Overview
 
 TensorRT Edge-LLM is NVIDIA's high-performance C++ inference runtime for Large Language Models (LLMs) and Vision-Language Models (VLMs) on embedded platforms. It enables efficient deployment of state-of-the-art language models on resource-constrained devices such as NVIDIA Jetson and NVIDIA DRIVE platforms. TensorRT Edge-LLM provides convenient Python scripts to convert HuggingFace checkpoints to [ONNX](https://onnx.ai). Engine build and end-to-end inference runs entirely on Edge platforms.
