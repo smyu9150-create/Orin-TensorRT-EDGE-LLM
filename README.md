@@ -4,8 +4,9 @@
 
 ---
 
-> **🔥 RMinte Fork**: 本 fork 增加了 OpenAI 兼容 API 服务器，支持流式输出和 Base64 图片输入。
-> 详见 [README_RMINTE.md](README_RMINTE.md)
+> **🔥 RMinte Fork**: This fork adds an OpenAI-compatible API server with streaming output and Base64 image input support.
+> 
+> 📖 Documentation: [English](README_RMINTE_EN.md) | [中文](README_RMINTE.md)
 
 ---
 
