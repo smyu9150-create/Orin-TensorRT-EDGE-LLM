@@ -12,7 +12,7 @@ from collections import deque
 # ==========================================
 # [설정] 서버 및 경로
 # ==========================================
-WORK_DIR = os.path.expanduser("~/RMinte-Orin-TensorRT-EDGE-LLM")
+WORK_DIR = os.path.expanduser("~/Orin-TensorRT-EDGE-LLM")
 
 SERVER_CMD = [
     "./build/examples/server/llm_server",
@@ -29,7 +29,7 @@ MODEL_DISPLAY_NAME = "Qwen3-VL-2B"
 # [설정] 비전 로직
 # ==========================================
 WINDOW_SIZE = 4
-STRIDE = 2
+STRIDE = 3
 
 http_session = requests.Session()
 
@@ -116,7 +116,7 @@ if __name__ == "__main__":
             current_time = time.time()
 
             # 0.25초마다 캡처
-            if current_time - last_capture_time > 0.125:
+            if current_time - last_capture_time > 0.25:
                 last_capture_time = current_time
                 img_b64 = frame_to_base64(frame)
                 frame_buffer.append(img_b64)
