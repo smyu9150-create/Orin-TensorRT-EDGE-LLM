@@ -1,0 +1,23 @@
+# 터미널 1: C++ 엔진 백엔드 (모델 로드)
+가장 먼저 실행하며, 모델을 GPU 메모리에 상주시킵니다.
+
+Bash
+cd ~/Orin-TensorRT-EDGE-LLM_lab
+
+./build/examples/server/llm_server \
+    --engineDir ./engines/qwen3-vl-2b-int4 \
+    --multimodalEngineDir ./visual_engines/qwen3-vl-2b-int4 \
+    --modelName Qwen3-VL-2B \
+    --port 8888
+역할: 8888번 포트를 열고 AI 엔진을 대기시킴.
+
+#llm 4096 vit 5120
+cd ~/Orin-TensorRT-EDGE-LLM
+
+./build/examples/server/llm_server \
+    --engineDir ./engines/qwen3-vl-2b-int4_4k \
+    --multimodalEngineDir ./visual_engines/qwen3-vl-2b-int4_5k \
+    --modelName Qwen3-VL-2B \
+    --port 8888
+
+확인: Engine loaded successfully 메시지 확인.
