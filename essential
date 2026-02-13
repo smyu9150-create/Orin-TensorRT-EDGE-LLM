@@ -1,0 +1,5 @@
+/home/etri/.cache/bazel/_bazel_etri/b7247a72d6a95433df2f1be2554d8cf6/sandbox/sandbox_stash/CppCompile/729/execroot/_main/external/+_repo_rules+cuda_l4t/include/sm_35_atomic_functions.h
+
+  rsync -avP \
+intern01@10.254.88.188:/home/intern01/Downloads/ABCD \
+/home/etri/

@@ -1,0 +1,195 @@
+conda deactivate 2>/dev/null || true
+
+# (있으면) 기존 환경 삭제
+conda env remove -n movinet_trt -y
+
+# 새 환경 생성
+conda create -n movinet_trt python=3.10 -y
+conda activate movinet_trt
+
+# 기본 빌드 툴 업데이트
+python -m pip install -U pip setuptools wheel
+
+python -c "import sys; print(sys.executable)"
+
+Step 4: Re-install your specific wheels
+Now you can install the files you have in your Downloads folder. Install torch first, then torchvision.
+
+Bash
+
+# Ensure you are in the Downloads directory
+cd ~/Downloads
+
+# Install the wheel files directly
+pip install ./torch-2.8.0-cp310-cp310-linux_aarch64.whl
+pip install ./torchvision-0.24.1-cp310-cp310-linux_aarch64.whl
+pip install torchvision==0.23.0 --index-url https://download.pytorch.org/whl/cu126
+
+
+python -c "import torch; import torchvision; print(f'Torch Version: {torch.__version__}'); print(f'Torchvision Version: {torchvision.__version__}'); print(f'CUDA Available: {torch.cuda.is_available()}'); print(f'Device Count: {torch.cuda.device_count()}'); print(f'Current Device: {torch.cuda.get_device_name(0) if torch.cuda.is_available() else \"None\"}')"
+
+Torch Version: 2.8.0
+Torchvision Version: 0.23.0
+CUDA Available: True
+Device Count: 1
+Current Device: Orin
+
+torch to tensor rt
+
+https://docs.pytorch.org/TensorRT/getting_started/jetpack.html
+
+qwen
+
+pip install -U transformers accelerate pillow
+
+sudo ~ 
+uv sync --index-strategy unsafe-best-match
+
+ffmpeg -i input Abuse001_x264_7-12.mp4 -vf fps=1 output_%04d.jpg
+
+exectorch
+
+Q engineering
+
+
+torch to tensorrt 의존성 무시하고 설치하기 
+
+# 의존성 설치를 건너뛰고 torch-tensorrt 본체만 설치
+pip install torch-tensorrt==2.8.0 --extra-index-url https://pypi.jetson-ai-lab.io/jp6/cu126 --no-deps
+
+
+
+tensorrt llm edge 
+
+export LIBRARY_PATH=/usr/local/cuda-12.6/lib64:$LIBRARY_PATH
+export LD_LIBRARY_PATH=/usr/local/cuda-12.6/lib64:$LD_LIBRARY_PATH
+
+mkdir build && cd build
+
+cmake .. \
+  -DTRT_PACKAGE_DIR=/usr \
+  -DCUDAToolkit_ROOT=/usr/local/cuda-12.6 \
+  -DCMAKE_CUDA_COMPILER=/usr/local/cuda-12.6/bin/nvcc \
+  -DCMAKE_CUDA_ARCHITECTURES=87 \
+  -DCMAKE_LIBRARY_PATH=/usr/local/cuda-12.6/lib64 \
+  -DCMAKE_TOOLCHAIN_FILE=../cmake/aarch64_linux_toolchain.cmake \
+  -DEMBEDDED_TARGET=jetson \
+  -DCUDA_VERSION=12.6
+
+  make -j4
+
+
+파일 가져오기
+
+  rsync -avP \
+intern01@10.254.88.188:/mnt/sdc/intern01/TensorRT-Edge-LLM/onnx_models/qwen3-vl-2b-int4 \
+/home/etri/
+
+
+LLM 엔진 빌드
+먼저 텍스트와 전반적인 추론을 담당하는 LLM 파트를 빌드합니다.
+
+./build/examples/llm/llm_build \
+    --onnxDir ~/Orin-TensorRT-EDGE-LLM_lab/ucf_crime_final-int4_awq \
+    --engineDir ./engines/qwen3-vl-2b-int4 \
+    --vlm
+    
+    
+
+cd ~/RMinte-Orin-TensorRT-EDGE-LLM
+./build/examples/llm/llm_build \
+    --onnxDir ~/onnx_models/qwen3-vl-2b-int4 \
+    --engineDir ~/engines/qwen3-vl-2b-int4 \
+    --vlm
+2. Visual Encoder 엔진 빌드
+그다음 이미지 처리를 담당하는 비주얼 인코더 파트를 빌드합니다. (visual_enc_onnx 폴더 지정)
+
+./build/examples/multimodal/visual_build \
+    --onnxDir ~/Orin-TensorRT-EDGE-LLM_lab/ucf_crime_final-int4_awq/visual_enc_onnx \
+    --engineDir ./visual_engines/qwen3-vl-2b-int4
+
+./build/examples/multimodal/visual_build \
+    --onnxDir ~/onnx_models/qwen3-vl-2b-int4/visual_enc_onnx \
+    --engineDir ~/visual_engines/qwen3-vl-2b-int4
+
+
+    성공하신 걸 축하드립니다! 젯슨 오린 위에서 Qwen3-VL-2B 모델이 비동기로 끊김 없이 돌아가는 걸 보니 저도 기쁘네요.
+
+나중에 다시 세팅하거나 정리하실 수 있도록, 3개의 터미널에서 각각 실행했던 핵심 명령어들을 순서대로 정리해 드립니다.
+
+# 터미널 1: C++ 엔진 백엔드 (모델 로드)
+가장 먼저 실행하며, 모델을 GPU 메모리에 상주시킵니다.
+
+Bash
+cd ~/Orin-TensorRT-EDGE-LLM_lab
+
+./build/examples/server/llm_server \
+    --engineDir ./engines/qwen3-vl-2b-int4 \
+    --multimodalEngineDir ./visual_engines/qwen3-vl-2b-int4 \
+    --modelName Qwen3-VL-2B \
+    --port 8888
+역할: 8888번 포트를 열고 AI 엔진을 대기시킴.
+
+#llm 4096 vit 5120
+cd ~/Orin-TensorRT-EDGE-LLM
+
+./build/examples/server/llm_server \
+    --engineDir ./engines/qwen3-vl-2b-int4_4k \
+    --multimodalEngineDir ./visual_engines/qwen3-vl-2b-int4_5k \
+    --modelName Qwen3-VL-2B \
+    --port 8888
+
+
+./build/examples/server/llm_server \
+    --engineDir ./engines/qwen3-vl-2b-int4_batch4 \
+    --multimodalEngineDir ./visual_engines/qwen3-vl-2b-int4_5k \
+    --modelName Qwen3-VL-2B \
+    --port 8888
+
+
+확인: Engine loaded successfully 메시지 확인.
+
+# 터미널 2: Python API 게이트웨이 (선택 사항)
+OpenAI 규격을 맞추기 위해 사용했던 게이트웨이입니다. (현재 직접 8888번으로 연결 중이라면 이 터미널은 생략해도 되지만, 표준 규격을 쓸 때 필요합니다.)
+
+Bash
+cd ~/RMinte-Orin-TensorRT-EDGE-LLM
+
+python3 examples/server/openai_api_server.py \
+    --host 0.0.0.0 \
+    --port 8000 \
+    --model-name Qwen3-VL-2B
+역할: 외부 앱이나 웹에서 접속하기 쉬운 OpenAI 스타일 문을 열어줌 (8000번 포트).
+
+터미널 3: 비동기 웹캠 클라이언트 (실행)
+영상이 끊기지 않도록 스레드를 사용해 AI 분석을 수행하는 실제 프로그램입니다.
+
+Bash
+# sam 가상환경이 켜져 있는지 확인 (conda activate sam)
+cd ~/RMinte-Orin-TensorRT-EDGE-LLM
+
+# 아까 만든 끊김 없는 코드 실행
+python qwen3-vl-2b-int4-webcam_stride4.py 
+
+역할: 웹캠 프레임을 읽어 8888번 서버로 보내고, 결과만 화면에 합성.
+
+캐쉬공간확보
+
+sudo sync && echo 3 | sudo tee /proc/sys/vm/drop_caches
+
+영상 길이 
+find . -name "*.mp4" -print0 | \
+xargs -0 -n1 ffprobe -v error -show_entries format=duration \
+-of default=noprint_wrappers=1:nokey=1 | \
+awk '{sum+=$1} END {printf "Total: %.2f sec (%.2f min, %.2f hr)\n", sum, sum/60, sum/3600}'
+
+
+173
+221
+265
+300
+788
+790
+859
+ Playing: Testing_Normal_Videos_Anomaly_Normal_Videos_928_x264.mp4 (GT: normal)
+
