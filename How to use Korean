@@ -1,0 +1,19 @@
+1. Fcitx5 및 한글 패키지 설치
+
+터미널에서 아래 명령어를 실행하여 ibus 대신 사용할 새로운 입력기를 설치합니다.
+Bash
+
+sudo apt update
+sudo apt install fcitx5 fcitx5-hangul im-config -y
+
+2. 기본 입력기 변경 (im-config)
+
+시스템에게 이제부터 ibus가 아닌 fcitx5를 사용하겠다고 알려줘야 합니다.
+
+    터미널에 im-config를 입력합니다.
+
+    창이 뜨면 OK -> Yes를 차례로 누릅니다.
+
+    목록에서 fcitx5를 선택하고 OK를 누릅니다.
+
+    반드시 시스템을 재부팅하거나 로그아웃 후 다시 로그인하세요.
